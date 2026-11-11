@@ -7,9 +7,12 @@ break it on purpose and fix it like an on-call SRE.
 Work through the phases in order. Each one ends with a checkpoint. Don't skip the
 "Try this" sections — that's where the learning happens.
 
-> **New: live website on AWS.** The app now has a web page at http://localhost:8080, and
-> `docs/04-aws-live-website.md` walks you through putting it live on AWS with Terraform,
-> CloudWatch logs, email alarms and a budget guard. Do it after Phase 2 (or any time after).
+> **New: live website in the cloud.** The app now has a web page at http://localhost:8080.
+> Put it live on the internet with Terraform, centralised logs and email alerts:
+> - **Azure (free with Azure for Students, no card):** `docs/05-azure-live-website.md`
+> - **AWS (new-account credits, card required):** `docs/04-aws-live-website.md`
+>
+> Do it after Phase 2, or any time after.
 
 ---
 

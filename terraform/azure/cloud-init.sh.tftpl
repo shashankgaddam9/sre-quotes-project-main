@@ -1,0 +1,37 @@
+#!/bin/bash
+# Runs ONCE when the server first boots. Output is saved to /var/log/user-data.log
+# (read it with: sudo cat /var/log/user-data.log) — the first place to look if the site doesn't come up.
+set -euxo pipefail
+exec > >(tee /var/log/user-data.log) 2>&1
+
+# 1. Add 1 GB of swap so a small server doesn't run out of memory
+fallocate -l 1G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+# 2. Install syslog (the monitoring agent reads logs from it), git and Docker (+ Compose)
+# On first boot Ubuntu may be installing updates; wait for the package lock instead of failing.
+echo 'DPkg::Lock::Timeout "600";' > /etc/apt/apt.conf.d/99-lock-timeout
+apt-get update
+apt-get install -y rsyslog git curl
+systemctl enable --now rsyslog
+curl -fsSL https://get.docker.com | sh
+usermod -aG docker azureuser
+
+# 3. Download your project from GitHub
+git clone --branch ${branch} ${repo_url} /opt/sre-quotes
+cd /opt/sre-quotes
+
+# 4. Settings for docker-compose.azure.yml
+cat > .env <<EOF
+GRAFANA_PASSWORD=${grafana_password}
+EOF
+chmod 600 .env
+
+# 5. Start the site
+export APP_VERSION="$(git rev-parse --short HEAD)"
+docker compose -f docker-compose.yml -f docker-compose.azure.yml up -d --build
+
+echo "Setup finished"

@@ -1,0 +1,45 @@
+# Extra settings used ONLY on the Azure server, layered on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.azure.yml up -d --build
+#
+# What this adds:
+#   - website on port 80 (normal web port)
+#   - app + Redis logs go to the server's syslog (facility local0); the Azure Monitor Agent
+#     ships them to a Log Analytics workspace where you can search them
+#     (`docker compose logs` still works too, thanks to Docker's local log cache)
+#   - Redis keeps its data on disk, so quotes survive restarts
+#   - containers restart automatically after a crash or reboot
+#   - a real Grafana password instead of admin/admin
+
+x-syslog: &syslog
+  driver: syslog
+  options:
+    syslog-facility: local0
+    tag: "{{.Name}}"           # shows up as ProcessName in Log Analytics
+
+services:
+  api:
+    build:
+      args:
+        APP_VERSION: ${APP_VERSION:-azure}
+    ports: ["80:8080"]
+    restart: unless-stopped
+    logging: *syslog
+
+  redis:
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports: !reset []           # don't expose Redis outside the server
+    restart: unless-stopped
+    logging: *syslog
+
+  prometheus:
+    restart: unless-stopped
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    restart: unless-stopped
+
+volumes:
+  redis-data:
