@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quotes</title>
+<style>
+  :root { --bg:#f6f5f1; --card:#fff; --ink:#1f1e1b; --muted:#6b6a64; --line:#e3e1d9; --accent:#2f6f5e; --bad:#a33a2b; --ok:#2f6f3a; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#191917; --card:#232320; --ink:#ecebe6; --muted:#a3a29b; --line:#3a3935; --accent:#6cc2a6; --bad:#f08a7a; --ok:#8fd09a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.6 system-ui, -apple-system, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width:720px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
+  blockquote { margin:0; font-size:22px; font-family: Georgia, serif; }
+  .author { color:var(--muted); margin-top:8px; }
+  button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  input { font:inherit; width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); margin-bottom:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  ul { list-style:none; padding:0; margin:0; }
+  li { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
+  li:first-child { border-top:0; }
+  .status { font-size:14px; color:var(--muted); }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; background:var(--muted); }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--bad); }
+  #msg { font-size:14px; min-height:22px; }
+  #msg.bad { color:var(--bad); } #msg.ok { color:var(--ok); }
+  code { font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Quotes</h1>
+  <p class="sub">A tiny site for practising SRE. Every click below is a request you can find in the logs.</p>
+
+  <div class="card">
+    <blockquote id="quote">Loading…</blockquote>
+    <div class="author" id="author"></div>
+    <div class="row" style="margin-top:16px">
+      <button class="primary" onclick="loadRandom()">Another quote</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>Add a quote</strong>
+    <div style="margin-top:8px">
+      <input id="text" placeholder="Quote text" maxlength="300">
+      <input id="who" placeholder="Author (optional)" maxlength="80">
+      <button class="primary" onclick="addQuote()">Save</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <strong>All quotes</strong>
+    <ul id="list" style="margin-top:8px"></ul>
+  </div>
+
+  <div class="card">
+    <strong>SRE practice</strong>
+    <p class="status" style="margin:4px 0 12px">Make an error on purpose, then go find it in the logs.</p>
+    <div class="row">
+      <button class="danger" onclick="simulateError()">Simulate a server error (500)</button>
+      <button onclick="checkHealth()">Check health</button>
+    </div>
+    <div id="msg" style="margin-top:12px"></div>
+  </div>
+
+  <p class="status"><span class="dot" id="dot"></span><span id="health">Checking service…</span> · version <code id="ver">?</code></p>
+</main>
+
+<script>
+const msg = (text, kind) => { const el = document.getElementById('msg'); el.textContent = text; el.className = kind || ''; };
+
+async function call(method, path, body) {
+  const res = await fetch(path, {
+    method, headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const requestId = res.headers.get('X-Request-ID');
+  let data = null;
+  try { data = await res.json(); } catch (e) { }
+  return { ok: res.ok, status: res.status, data, requestId };
+}
+
+function showFailure(r, what) {
+  msg(`${what} failed: HTTP ${r.status}. Search the logs for request_id ${r.requestId}`, 'bad');
+}
+
+async function loadRandom() {
+  const r = await call('GET', '/api/quotes/random');
+  const q = document.getElementById('quote'), a = document.getElementById('author');
+  if (r.ok) { q.textContent = '“' + r.data.text + '”'; a.textContent = '— ' + r.data.author; }
+  else if (r.status === 404) { q.textContent = 'No quotes yet. Add the first one below.'; a.textContent = ''; }
+  else { q.textContent = 'Could not load a quote.'; a.textContent = ''; showFailure(r, 'Loading a quote'); }
+}
+
+async function loadList() {
+  const r = await call('GET', '/api/quotes');
+  const ul = document.getElementById('list');
+  ul.innerHTML = '';
+  if (!r.ok) { showFailure(r, 'Loading the list'); return; }
+  if (!r.data.quotes.length) { ul.innerHTML = '<li class="status">Nothing here yet.</li>'; return; }
+  for (const q of r.data.quotes.slice().reverse()) {
+    const li = document.createElement('li');
+    const span = document.createElement('span');
+    span.textContent = q.text + ' — ' + q.author;
+    const btn = document.createElement('button');
+    btn.textContent = 'Delete';
+    btn.onclick = () => removeQuote(q.id);
+    li.append(span, btn);
+    ul.append(li);
+  }
+}
+
+async function addQuote() {
+  const text = document.getElementById('text').value.trim();
+  const author = document.getElementById('who').value.trim() || 'unknown';
+  if (!text) { msg('Type a quote first.', 'bad'); return; }
+  const r = await call('POST', '/api/quotes', { text, author });
+  if (r.ok) { msg('Saved. request_id ' + r.requestId, 'ok'); document.getElementById('text').value = ''; document.getElementById('who').value = ''; loadList(); loadRandom(); }
+  else showFailure(r, 'Saving');
+}
+
+async function removeQuote(id) {
+  const r = await call('DELETE', '/api/quotes/' + id);
+  if (r.ok) { msg('Deleted.', 'ok'); loadList(); } else showFailure(r, 'Deleting');
+}
+
+async function simulateError() {
+  const r = await call('POST', '/api/simulate-error');
+  showFailure(r, 'Simulated request');
+}
+
+async function checkHealth() {
+  const live = await call('GET', '/healthz');
+  const ready = await call('GET', '/readyz');
+  const dot = document.getElementById('dot'), h = document.getElementById('health');
+  document.getElementById('ver').textContent = live.data ? live.data.version : '?';
+  if (live.ok && ready.ok) { dot.className = 'dot ok'; h.textContent = 'All systems working'; }
+  else if (live.ok) { dot.className = 'dot bad'; h.textContent = 'App is up, but the database is unreachable'; }
+  else { dot.className = 'dot bad'; h.textContent = 'Service is down'; }
+}
+
+loadRandom(); loadList(); checkHealth();
+setInterval(checkHealth, 15000);
+</script>
+</body>
+</html>

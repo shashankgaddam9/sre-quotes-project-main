@@ -1,0 +1,26 @@
+# Production: 3 replicas, higher HPA ceiling.
+# Deploy: kubectl apply -k k8s/overlays/production
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: quotes
+resources:
+  - namespace.yaml
+  - ../../base
+patches:
+  - target: { kind: Deployment, name: quotes-api }
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  - target: { kind: HorizontalPodAutoscaler, name: quotes-api }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 10
+images:
+  - name: quotes-api
+    newName: quotes-api
+    newTag: local     # CI replaces this with the git SHA

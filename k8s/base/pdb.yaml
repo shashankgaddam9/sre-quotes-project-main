@@ -1,0 +1,10 @@
+# During voluntary disruptions (node drain, cluster upgrade) keep at least 1 pod running.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: quotes-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: quotes-api

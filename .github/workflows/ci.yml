@@ -1,0 +1,160 @@
+# CI: runs on every pull request and every push to main.
+#
+#   lint -> unit tests -> build image -> scan image -> validate k8s -> e2e on kind
+#                                                                   |
+#                                       (main only) push image to GHCR + bump staging tag (GitOps)
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+
+permissions:
+  contents: write      # needed to commit the staging image-tag bump
+  packages: write      # needed to push to GitHub Container Registry
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/quotes-api
+
+jobs:
+  test:
+    name: Lint & unit test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: ruff check .
+      - name: Unit tests
+        run: pytest -v
+
+  validate-k8s:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+      - name: Render & validate overlays
+        run: |
+          for env in staging production; do
+            echo "--- $env ---"
+            kubectl kustomize k8s/overlays/$env | kubeconform -strict -summary -ignore-missing-schemas
+          done
+
+  build-and-scan:
+    name: Build & scan image
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (load locally for scanning)
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          load: true
+          tags: quotes-api:${{ github.sha }}
+          build-args: APP_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Scan for vulnerabilities (fails on CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: quotes-api:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Save image for e2e job
+        run: docker save quotes-api:${{ github.sha }} -o /tmp/image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  e2e:
+    name: End-to-end test on a throwaway kind cluster
+    needs: [build-and-scan, validate-k8s]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: image
+          path: /tmp
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+      - name: Load image into kind
+        run: |
+          docker load -i /tmp/image.tar
+          kind load docker-image quotes-api:${{ github.sha }} --name ci
+      - name: Deploy staging overlay with this build
+        run: |
+          cd k8s/overlays/staging
+          kustomize edit set image quotes-api=quotes-api:${{ github.sha }}
+          cd -
+          kubectl apply -k k8s/overlays/staging
+          kubectl -n quotes-staging rollout status statefulset/redis --timeout=120s
+          kubectl -n quotes-staging rollout status deployment/quotes-api --timeout=180s
+      - name: Smoke test
+        run: |
+          kubectl -n quotes-staging port-forward svc/quotes-api 8080:80 &
+          sleep 3
+          ./scripts/smoke-test.sh http://localhost:8080
+      - name: Dump debug info on failure
+        if: failure()
+        run: |
+          kubectl -n quotes-staging get all
+          kubectl -n quotes-staging describe pods
+          kubectl -n quotes-staging logs -l app=quotes-api --tail=100
+
+  publish:
+    name: Push image & bump staging (GitOps)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          build-args: APP_VERSION=${{ github.sha }}
+          cache-from: type=gha
+      - name: Point staging at the new image
+        run: |
+          cd k8s/overlays/staging
+          kustomize edit set image quotes-api=${{ env.IMAGE }}:${{ github.sha }}
+      - name: Commit the bump (Argo CD will pick it up and deploy)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays/staging/kustomization.yaml
+          git commit -m "deploy(staging): quotes-api ${GITHUB_SHA::7} [skip ci]" || echo "nothing to commit"
+          git push

@@ -1,0 +1,60 @@
+# Prometheus alert rules for the Quotes API.
+# SLO: 99.5% of /api requests succeed (non-5xx) over 30 days.
+#      Error budget = 0.5% of requests.
+# Burn-rate alerts (Google SRE Workbook, ch. 5): page when the budget is
+# being spent much faster than "evenly over 30 days".
+groups:
+  - name: quotes-api-slo
+    rules:
+      # ---- Recording rules: precompute the SLI ----
+      - record: sli:error_ratio:rate5m
+        expr: |
+          sum(rate(http_requests_total{endpoint=~"/api.*", status=~"5.."}[5m]))
+          /
+          sum(rate(http_requests_total{endpoint=~"/api.*"}[5m]))
+      - record: sli:error_ratio:rate1h
+        expr: |
+          sum(rate(http_requests_total{endpoint=~"/api.*", status=~"5.."}[1h]))
+          /
+          sum(rate(http_requests_total{endpoint=~"/api.*"}[1h]))
+      - record: sli:latency_p99:5m
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{endpoint=~"/api.*"}[5m])))
+
+      # ---- Alerts ----
+      - alert: HighErrorBudgetBurn
+        # 14.4x burn = 2% of a 30-day budget gone in 1 hour  -> page someone
+        expr: sli:error_ratio:rate5m > (14.4 * 0.005) and sli:error_ratio:rate1h > (14.4 * 0.005)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "Quotes API is burning error budget fast"
+          description: "5xx ratio is {{ $value | humanizePercentage }}. Runbook: docs/runbooks/high-error-rate.md"
+
+      - alert: HighLatencyP99
+        expr: sli:latency_p99:5m > 0.5
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "p99 latency above 500ms"
+          description: "p99 is {{ $value }}s. Runbook: docs/runbooks/high-latency.md"
+
+      - alert: RedisUnreachable
+        expr: max(redis_up) == 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "API pods cannot reach Redis"
+          description: "Runbook: docs/runbooks/redis-down.md"
+
+      - alert: ApiDown
+        expr: absent(up{job=~".*quotes.*"} == 1)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "No Quotes API targets are up"
+          description: "Runbook: docs/runbooks/api-down.md"

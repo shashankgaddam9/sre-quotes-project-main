@@ -1,0 +1,23 @@
+# Staging: same manifests, 1 replica minimum, separate namespace.
+# Deploy: kubectl apply -k k8s/overlays/staging
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: quotes-staging
+resources:
+  - namespace.yaml
+  - ../../base
+patches:
+  - target: { kind: HorizontalPodAutoscaler, name: quotes-api }
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+  - target: { kind: Ingress, name: quotes-api }
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: staging.quotes.localhost
+images:
+  - name: quotes-api
+    newName: quotes-api
+    newTag: local     # CI replaces this with the git SHA

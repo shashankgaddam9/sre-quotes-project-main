@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quotes-api
+  labels:
+    app: quotes-api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5          # lets you `kubectl rollout undo`
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0            # never drop below desired capacity during deploys
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: quotes-api
+  template:
+    metadata:
+      labels:
+        app: quotes-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      # Spread pods across nodes so one node failure doesn't take everything down
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: quotes-api
+      containers:
+        - name: api
+          image: quotes-api:local   # overridden by kustomize / CI
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: quotes-api-config
+          resources:
+            requests:              # what the scheduler reserves
+              cpu: 100m
+              memory: 128Mi
+            limits:                # hard ceiling (exceed memory -> OOMKilled)
+              cpu: 500m
+              memory: 256Mi
+          # Startup: give the app time to boot before other probes kick in
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 15
+          # Liveness: restart the container if the process is wedged
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness: remove pod from the Service if it can't reach Redis
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            failureThreshold: 2
+          lifecycle:
+            preStop:               # let the load balancer drain before SIGTERM
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,18 @@
+# Tells the Prometheus Operator (kube-prometheus-stack) to scrape quotes-api.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: quotes-api
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames: ["quotes", "quotes-staging"]
+  selector:
+    matchLabels:
+      app: quotes-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

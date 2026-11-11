@@ -1,0 +1,18 @@
+# Routes http://quotes.localhost -> quotes-api Service (via ingress-nginx).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: quotes-api
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: quotes.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: quotes-api
+                port:
+                  number: 80

@@ -1,0 +1,44 @@
+# Extra settings used ONLY on the AWS server, layered on top of docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.aws.yml up -d --build
+#
+# What this adds:
+#   - website on port 80 (normal web port) as well as 8080
+#   - app + Redis logs are shipped to AWS CloudWatch Logs
+#   - Redis keeps its data on disk, so quotes survive restarts
+#   - containers restart automatically if they crash or the server reboots
+#   - a real Grafana password instead of admin/admin
+
+x-cloudwatch-logs: &cloudwatch-logs
+  driver: awslogs
+  options:
+    awslogs-region: ${AWS_REGION}
+    awslogs-group: ${LOG_GROUP}
+    tag: "{{.Name}}"          # each container gets its own log stream
+
+services:
+  api:
+    build:
+      args:
+        APP_VERSION: ${APP_VERSION:-aws}
+    ports: ["80:8080"]
+    restart: unless-stopped
+    logging: *cloudwatch-logs
+
+  redis:
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports: !reset []           # don't expose Redis outside the server
+    restart: unless-stopped
+    logging: *cloudwatch-logs
+
+  prometheus:
+    restart: unless-stopped
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+    restart: unless-stopped
+
+volumes:
+  redis-data:

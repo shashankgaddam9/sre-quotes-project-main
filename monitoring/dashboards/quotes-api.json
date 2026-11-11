@@ -1,0 +1,46 @@
+{
+  "title": "Quotes API - Golden Signals",
+  "uid": "quotes-api",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries", "title": "Traffic (requests/sec)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "sum by (endpoint) (rate(http_requests_total[1m]))", "legendFormat": "{{endpoint}}" }]
+    },
+    {
+      "type": "timeseries", "title": "Error ratio (5xx / all) on /api",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" } },
+      "targets": [{ "expr": "sum(rate(http_requests_total{endpoint=~\"/api.*\",status=~\"5..\"}[1m])) / sum(rate(http_requests_total{endpoint=~\"/api.*\"}[1m]))", "legendFormat": "error ratio" }]
+    },
+    {
+      "type": "timeseries", "title": "Latency p50 / p95 / p99",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{endpoint=~\"/api.*\"}[1m])))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{endpoint=~\"/api.*\"}[1m])))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{endpoint=~\"/api.*\"}[1m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "stat", "title": "Availability (last 1h)",
+      "gridPos": { "x": 12, "y": 8, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3 } },
+      "targets": [{ "expr": "1 - (sum(rate(http_requests_total{endpoint=~\"/api.*\",status=~\"5..\"}[1h])) / sum(rate(http_requests_total{endpoint=~\"/api.*\"}[1h])))" }]
+    },
+    {
+      "type": "stat", "title": "Redis reachable",
+      "gridPos": { "x": 18, "y": 8, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "min(redis_up)" }]
+    }
+  ]
+}

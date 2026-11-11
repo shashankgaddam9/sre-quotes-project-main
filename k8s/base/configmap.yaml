@@ -1,0 +1,10 @@
+# Non-secret configuration. Changing this + restarting pods = config change without rebuild.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: quotes-api-config
+data:
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  FAULT_ERROR_RATE: "0"     # incident drills: set to "0.3" to make 30% of requests fail
+  FAULT_LATENCY_MS: "0"     # incident drills: set to "800" to add latency
